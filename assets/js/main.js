@@ -250,8 +250,7 @@ function renderRecentChats(filter = '') {
         const isStranger = Number(c.is_contact) === 0;
         const hasMessages = messages.some(m => m.sender_phone === c.phone || m.receiver_phone === c.phone);
 
-        const isSavedContact = Number(c.is_contact) === 1;
-        return hasUnread || isActive || hasMessages || isStranger || isSavedContact;
+        return hasUnread || isActive || hasMessages || isStranger;
     });
 
     if (recent.length === 0) {
