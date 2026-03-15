@@ -166,7 +166,7 @@ async function syncData() {
     const data = await res.json();
     contacts = data.contacts;
     messages = data.messages;
-    
+
     // Get current search query to maintain filter during sync
     const searchQuery = document.getElementById('recent-search')?.value || '';
     renderRecentChats(searchQuery);
@@ -250,7 +250,8 @@ function renderRecentChats(filter = '') {
         const isStranger = Number(c.is_contact) === 0;
         const hasMessages = messages.some(m => m.sender_phone === c.phone || m.receiver_phone === c.phone);
 
-        return hasUnread || isActive || hasMessages || isStranger;
+        const isSavedContact = Number(c.is_contact) === 1;
+        return hasUnread || isActive || hasMessages || isStranger || isSavedContact;
     });
 
     if (recent.length === 0) {
@@ -294,7 +295,7 @@ function renderContactsList(filter = '') {
         const matchesFilter = (c.name && c.name.toLowerCase().includes(filter.toLowerCase())) || c.phone.includes(filter);
         const isSaved = Number(c.is_contact) === 1;
         const hasHistory = messages.some(m => m.sender_phone === c.phone || m.receiver_phone === c.phone);
-        
+
         return matchesFilter && (isSaved || hasHistory);
     });
 
@@ -344,7 +345,7 @@ function filterRecentChats() {
 
 function setActiveFilter(filter, el) {
     _activeFilter = filter;
-    
+
     // Update UI active state
     document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
     el.classList.add('active');
