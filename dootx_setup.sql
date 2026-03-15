@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone         VARCHAR(20)  NOT NULL UNIQUE,
     name          VARCHAR(100) NOT NULL DEFAULT 'User',
     public_key    TEXT         NOT NULL,               -- Base64-encoded RSA-2048 SPKI public key
-    profile_photo TEXT         NULL,                   -- Optional Data-URL profile image (base64)
+    profile_photo LONGTEXT     NULL,                   -- Optional Data-URL profile image (base64)
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

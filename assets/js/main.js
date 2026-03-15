@@ -25,6 +25,7 @@ let _renderedMsgIds = new Set();   // IDs of already-rendered messages
 let _lastRenderedDate = '';        // track date changes inside a chat
 let _cachedPrivKey = null;         // cached CryptoKey to avoid re-import every sync
 let _cachedPrivPhone = '';         // which phone the cached key belongs to
+let _activeFilter = 'all';         // active sidebar filter (all, unread, stranger)
 
 // ─── AUTH LOGIC ───────────────────────────────────────────────
 // temp: hold name from check_user until loginUser() saves it
@@ -165,8 +166,31 @@ async function syncData() {
     const data = await res.json();
     contacts = data.contacts;
     messages = data.messages;
-    renderContacts();
+    
+    // Get current search query to maintain filter during sync
+    const searchQuery = document.getElementById('recent-search')?.value || '';
+    renderRecentChats(searchQuery);
     if (activeChat) {
+        // Find fresh contact data for active chat to see if they changed their avatar/name
+        const freshContact = contacts.find(c => c.phone === activeChat.phone);
+        if (freshContact) {
+            const avatarChanged = freshContact.profile_photo !== activeChat.profile_photo;
+            const nameChanged = freshContact.name !== activeChat.name;
+            activeChat = freshContact; // update active chat object
+
+            if (avatarChanged || nameChanged) {
+                // Update chat header UI
+                const av = document.getElementById('chat-avatar');
+                if (activeChat.profile_photo) {
+                    av.innerHTML = `<img src="${activeChat.profile_photo}" alt="" />`;
+                } else {
+                    av.textContent = activeChat.name ? activeChat.name[0].toUpperCase() : '?';
+                }
+                av.className = `contact-avatar ${avatarClass(activeChat.name)}`;
+                document.getElementById('chat-name').innerText = activeChat.name;
+            }
+        }
+
         // If we have active chat, check for new messages to possibly mark as read
         const chatMsgs = messages.filter(m =>
             (m.sender_phone === myPhone && m.receiver_phone === activeChat.phone) ||
@@ -177,6 +201,12 @@ async function syncData() {
 
         // Always call renderMessages when chat is active to update read receipts for already rendered msgs
         renderMessages();
+    }
+
+    // Refresh contact modal if it's currently open
+    const modal = document.getElementById('contacts-modal');
+    if (modal && modal.classList.contains('open')) {
+        renderContactsList(document.getElementById('contacts-search-input').value);
     }
 }
 
@@ -190,45 +220,151 @@ async function markAsRead(sender) {
     // but the next sync will have unread_count=0.
 }
 
-function renderContacts() {
+function renderRecentChats(filter = '') {
     const list = document.getElementById('contact-list');
-    // Build a quick key to detect if anything changed (including unread counts and avatar)
+    if (!list) return;
+
+    // Build a quick key to detect if anything changed
     const key = contacts.map(c => {
-        const avatarKey = (c.profile_photo || '').slice(0, 20); // re-render if image changes
-        return c.phone + (activeChat?.phone === c.phone ? '*' : '') + '|' + c.unread_count + '|' + avatarKey;
-    }).join('|');
+        const photo = c.profile_photo || '';
+        const avatarKey = photo ? photo.length + photo.slice(-20) : 'none';
+        return c.phone + (activeChat?.phone === c.phone ? '*' : '') + '|' + c.unread_count + '|' + avatarKey + '|' + c.is_contact;
+    }).join('|') + `-${activeChat?.phone}-${filter}-${_activeFilter}`;
+
     if (key === _lastContactsKey) return;
     _lastContactsKey = key;
 
-    if (!contacts.length) {
-        list.innerHTML = `<div style="padding:24px 12px;text-align:center;color:var(--text-muted);font-size:13px;">No contacts yet.<br>Tap <strong>+</strong> to add someone.</div>`;
+    // Filter contacts to only show "recent" ones + search match + pill filter
+    const recent = contacts.filter(c => {
+        // 1. Search filter
+        const matchesSearch = (c.name && c.name.toLowerCase().includes(filter.toLowerCase())) || c.phone.includes(filter);
+        if (!matchesSearch) return false;
+
+        // 2. Pill filter
+        if (_activeFilter === 'unread' && c.unread_count === 0) return false;
+        if (_activeFilter === 'stranger' && Number(c.is_contact) !== 0) return false;
+
+        // 3. Recent chat logic (has messages OR unread OR active OR stranger)
+        const hasUnread = c.unread_count > 0;
+        const isActive = activeChat?.phone === c.phone;
+        const isStranger = Number(c.is_contact) === 0;
+        const hasMessages = messages.some(m => m.sender_phone === c.phone || m.receiver_phone === c.phone);
+
+        return hasUnread || isActive || hasMessages || isStranger;
+    });
+
+    if (recent.length === 0) {
+        list.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon">
+                    <i data-lucide="${filter ? 'search-x' : 'message-square'}"></i>
+                </div>
+                <p>${filter ? 'No results found' : 'No recent chats'}</p>
+                <span>${filter ? 'Try a different keyword' : 'Start a new conversation from Contacts'}</span>
+            </div>
+        `;
+        lucide.createIcons();
         return;
     }
-    list.innerHTML = contacts.map(c => `
+
+    list.innerHTML = recent.map(c => `
                 <div onclick="selectChat('${c.phone}')"
-                     class="contact-item ${activeChat?.phone === c.phone ? 'active' : ''}">
+                     class="contact-item ${activeChat?.phone === c.phone ? 'active' : ''} ${Number(c.is_contact) === 0 ? 'stranger' : ''}">
                     <div class="contact-avatar ${avatarClass(c.name)}">
-                        ${c.profile_photo ? `<img src="${c.profile_photo}" alt="" />` : c.name[0].toUpperCase()}
+                        ${c.profile_photo ? `<img src="${c.profile_photo}" alt="" />` : (c.name ? c.name[0].toUpperCase() : '?')}
                     </div>
                     <div class="contact-info">
-                        <h3>${c.name}</h3>
-                        <p>${activeChat?.phone === c.phone ? 'Active now' : 'Tap to chat'}</p>
+                        <h3>${c.name} ${Number(c.is_contact) === 0 ? '<span class="stranger-badge">New</span>' : ''}</h3>
+                        <p>${activeChat?.phone === c.phone ? 'Active now' : (Number(c.is_contact) === 0 ? 'Stranger' : 'Tap to chat')}</p>
                     </div>
                     ${c.unread_count > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
                 </div>
             `).join('');
 }
 
+
+/**
+ * Render All Contacts Modal
+ */
+function renderContactsList(filter = '') {
+    const modalList = document.getElementById('contacts-modal-list');
+    if (!modalList) return;
+
+    const filtered = contacts.filter(c => {
+        const matchesFilter = (c.name && c.name.toLowerCase().includes(filter.toLowerCase())) || c.phone.includes(filter);
+        const isSaved = Number(c.is_contact) === 1;
+        const hasHistory = messages.some(m => m.sender_phone === c.phone || m.receiver_phone === c.phone);
+        
+        return matchesFilter && (isSaved || hasHistory);
+    });
+
+    if (filtered.length === 0) {
+        modalList.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-dim);">No contacts found</div>';
+        return;
+    }
+
+    modalList.innerHTML = filtered.map(c => `
+        <div class="modal-contact-item" onclick="selectChat('${c.phone}')">
+            <div class="contact-avatar ${avatarClass(c.name)}">
+                ${c.profile_photo ? `<img src="${c.profile_photo}" alt="" />` : (c.name ? c.name[0].toUpperCase() : '?')}
+            </div>
+            <div class="contact-info">
+                <h3>${c.name}</h3>
+                <p>${c.phone}</p>
+            </div>
+        </div>
+    `).join('');
+
+    lucide.createIcons();
+}
+
+function openContacts() {
+    const modal = document.getElementById('contacts-modal');
+    if (modal) {
+        modal.classList.add('open');
+        document.getElementById('contacts-search-input').value = '';
+        renderContactsList();
+    }
+}
+
+function closeContacts() {
+    const modal = document.getElementById('contacts-modal');
+    if (modal) modal.classList.remove('open');
+}
+
+function filterContactsList() {
+    const query = document.getElementById('contacts-search-input').value;
+    renderContactsList(query);
+}
+
+function filterRecentChats() {
+    const query = document.getElementById('recent-search').value;
+    renderRecentChats(query);
+}
+
+function setActiveFilter(filter, el) {
+    _activeFilter = filter;
+    
+    // Update UI active state
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+
+    // Trigger re-render (keeping current search query)
+    const query = document.getElementById('recent-search').value;
+    renderRecentChats(query);
+}
+
 function selectChat(phone) {
     const contact = contacts.find(c => c.phone === phone);
     if (!contact) return;
     activeChat = contact;
+    closeContacts(); // Added: close modal if opening chat from there
 
     const av = document.getElementById('chat-avatar');
     if (contact.profile_photo) {
         av.innerHTML = `<img src="${contact.profile_photo}" alt="" />`;
     } else {
-        av.textContent = contact.name[0].toUpperCase();
+        av.textContent = contact.name ? contact.name[0].toUpperCase() : '?';
     }
     av.className = `contact-avatar ${avatarClass(contact.name)}`;
     av.style.cssText = 'width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;flex-shrink:0;';
@@ -241,9 +377,19 @@ function selectChat(phone) {
     _lastRenderedDate = '';
     _lastContactsKey = ''; // force contact highlight update
 
-    markAsRead(phone); // notify backend
+    // Check if this is a stranger (not in contacts)
+    const isStranger = Number(contact.is_contact) === 0;
+    const prompt = document.getElementById('safety-prompt');
+    if (isStranger) {
+        prompt.classList.remove('hidden');
+        document.body.classList.add('stranger-active');
+    } else {
+        prompt.classList.add('hidden');
+        document.body.classList.remove('stranger-active');
+        markAsRead(phone); // notify backend only if not a stranger
+    }
 
-    renderContacts();
+    renderRecentChats(); // Changed: updated name
     renderMessages().then(() => {
         // Force scroll to bottom on new chat opened
         const area = document.getElementById('messages-area');
@@ -251,10 +397,32 @@ function selectChat(phone) {
     });
 
     document.body.classList.add('chat-active');
+    lucide.createIcons(); // refresh icons in prompt
+}
+
+async function acceptStranger() {
+    if (!activeChat) return;
+    const res = await fetch('api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=add_contact&phone=${encodeURIComponent(myPhone)}&contact_phone=${encodeURIComponent(activeChat.phone)}`
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+        activeChat.is_contact = 1;
+        document.getElementById('safety-prompt').classList.add('hidden');
+        document.body.classList.remove('stranger-active');
+        markAsRead(activeChat.phone); // mark as read once accepted
+        _renderedMsgIds.clear(); // force full re-render to show hidden msgs
+        renderMessages();
+        syncData(); // refresh contact list state
+    }
 }
 
 function closeChat() {
     document.body.classList.remove('chat-active');
+    document.body.classList.remove('stranger-active');
+    document.getElementById('safety-prompt')?.classList.add('hidden');
     activeChat = null;
     _lastContactsKey = '';
     renderContacts();
@@ -287,6 +455,19 @@ async function renderMessages() {
             { name: "RSA-OAEP", hash: "SHA-256" }, true, ["decrypt"]
         );
         _cachedPrivPhone = myPhone;
+    }
+
+    // If this is a stranger, hide messages
+    const isStranger = Number(activeChat?.is_contact) === 0;
+    if (isStranger) {
+        area.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-state-icon"><i data-lucide="eye-off"></i></div>
+                <p>Messages are hidden</p>
+                <span>Click "Yes, I know them" below to reveal the chat history.</span>
+            </div>`;
+        lucide.createIcons();
+        return;
     }
 
     // If this is a fresh render (no rendered messages yet), clear old content
@@ -443,7 +624,7 @@ async function sendMessage(e) {
     if (!text || !activeChat) return;
 
     const pubKey = await window.crypto.subtle.importKey(
-        "spki", str2ab(atob(activeChat.pubKey)),
+        "spki", str2ab(atob(activeChat.public_key)),
         { name: "RSA-OAEP", hash: "SHA-256" }, true, ["encrypt"]
     );
 
@@ -529,16 +710,16 @@ async function refreshMyProfile() {
         myName = data.name;
         sessionStorage.setItem('tab_name', myName);
     }
-    if (data.profile_photo) {
-        myPhoto = data.profile_photo;
-        sessionStorage.setItem('tab_photo', myPhoto);
-    }
+    // Always update myPhoto even if empty (e.g. removed or failed to save previously)
+    myPhoto = data.profile_photo || "";
+    sessionStorage.setItem('tab_photo', myPhoto);
     setFooter(myName, myPhone, myPhoto);
 }
 
 function openSettings() {
     document.getElementById('settings-name').value = myName;
     document.getElementById('settings-phone').value = myPhone;
+    _tempPhotoData = myPhoto; // reset temp state
     updateSettingsPreview(myPhoto);
     document.getElementById('settings-modal').classList.add('open');
 }
@@ -565,14 +746,20 @@ function readFileAsDataURL(file) {
     });
 }
 
+let _tempPhotoData = "";
+
+function triggerPhotoUpload() {
+    document.getElementById('settings-photo').click();
+}
+
+function removePhoto() {
+    _tempPhotoData = "";
+    updateSettingsPreview("");
+}
+
 async function saveSettings() {
     const name = document.getElementById('settings-name').value.trim();
-    const fileInput = document.getElementById('settings-photo');
-    let photoData = myPhoto;
-
-    if (fileInput.files && fileInput.files[0]) {
-        photoData = await readFileAsDataURL(fileInput.files[0]);
-    }
+    const photoData = _tempPhotoData;
 
     const params = new URLSearchParams({
         action: 'update_profile',
@@ -609,7 +796,10 @@ document.getElementById('settings-photo')?.addEventListener('change', async (eve
     const file = event.target.files?.[0];
     if (!file) return;
     const dataUrl = await readFileAsDataURL(file);
+    _tempPhotoData = dataUrl;
     updateSettingsPreview(dataUrl);
+    // Reset file input so same file can be selected again
+    event.target.value = '';
 });
 
 if (myPhone) {
@@ -626,8 +816,8 @@ if (myPhone) {
             myName = data.name;
             sessionStorage.setItem('tab_name', myName);
         }
-        if (data.profile_photo) {
-            myPhoto = data.profile_photo;
+        if (data.profile_photo !== undefined) {
+            myPhoto = data.profile_photo || "";
             sessionStorage.setItem('tab_photo', myPhoto);
         }
         setFooter(myName, myPhone, myPhoto);

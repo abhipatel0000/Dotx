@@ -1,9 +1,11 @@
 <?php
 // db.php — DoTX Database Connection
-$db_host = 'mysql.railway.internal';
-$db_name = 'railway';
-$db_user = 'root';
-$db_pass = 'QBYpAquYVcwqMKURMivzTjYVpUKbWRcc';
+require_once 'env.php';
+
+$db_host = $_ENV['DB_HOST'] ?? 'localhost';
+$db_name = $_ENV['DB_NAME'] ?? 'dotx';
+$db_user = $_ENV['DB_USER'] ?? 'root';
+$db_pass = $_ENV['DB_PASS'] ?? '';
 
 try {
     $pdo = new PDO("mysql:host=$db_host;dbname=$db_name;charset=utf8mb4", $db_user, $db_pass);

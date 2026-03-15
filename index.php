@@ -56,23 +56,62 @@ require_once 'security.php'; // 🛡️ LOAD SECURITY RULES FIRST
 
     <!-- ═══ APP SHELL ════════════════════════════════════════════ -->
     <div id="app-container">
+        <!-- ═══ NAVIGATION SIDEBAR (LEFT) ══════════════ -->
+        <nav id="nav-sidebar">
+            <div class="nav-top">
+                <div class="nav-logo">
+                    <i data-lucide="message-square"></i>
+                </div>
+
+                <button class="nav-btn" onclick="openContacts()" title="All Contacts">
+                    <i data-lucide="users"></i>
+                </button>
+                <button class="nav-btn" onclick="openAddContact()" title="Add Contact">
+                    <i data-lucide="user-plus"></i>
+                </button>
+            </div>
+
+            <div class="nav-bottom">
+                <button class="nav-btn" onclick="openSettings()" title="Settings">
+                    <i data-lucide="settings"></i>
+                </button>
+            </div>
+        </nav>
 
         <!-- ── Sidebar ─────────────────────────────────────────── -->
         <aside>
             <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon"><i data-lucide="message-square"></i></div>
                     DoTX
                 </div>
-                <button class="settings-btn" onclick="openSettings()" title="Settings">
-                    <i data-lucide="settings"></i>
-                </button>
-                <button class="add-btn" onclick="openAddContact()" title="Add Contact">
-                    <i data-lucide="user-plus"></i>
-                </button>
+                <!-- Icons for mobile (hidden on desktop) -->
+                <div class="mobile-nav-actions hidden-desktop">
+                    <button class="nav-btn" onclick="openContacts()">
+                        <i data-lucide="users"></i>
+                    </button>
+                    <button class="nav-btn" onclick="openAddContact()">
+                        <i data-lucide="user-plus"></i>
+                    </button>
+                    <button class="nav-btn" onclick="openSettings()">
+                        <i data-lucide="settings"></i>
+                    </button>
+                </div>
             </div>
 
-            <div class="contact-section-label">Messages</div>
+            <div class="sidebar-search">
+                <div class="search-input-wrapper">
+                    <i data-lucide="search"></i>
+                    <input type="text" id="recent-search" placeholder="Search or start a new chat"
+                        oninput="filterRecentChats()">
+                </div>
+                <div class="filter-pills">
+                    <button class="filter-pill active" onclick="setActiveFilter('all', this)">All</button>
+                    <button class="filter-pill" onclick="setActiveFilter('unread', this)">Unread</button>
+                    <button class="filter-pill" onclick="setActiveFilter('stranger', this)">Strangers</button>
+                </div>
+            </div>
+
+            <div class="contact-section-label">Recent Messages</div>
             <div id="contact-list"></div>
 
             <div class="sidebar-footer">
@@ -107,6 +146,21 @@ require_once 'security.php'; // 🛡️ LOAD SECURITY RULES FIRST
                     <div class="empty-state-icon"><i data-lucide="lock"></i></div>
                     <p>Your messages are encrypted</p>
                     <span>Select a contact to start chatting</span>
+                </div>
+            </div>
+
+            <!-- Stranger Security Prompt -->
+            <div id="safety-prompt" class="hidden">
+                <div class="safety-content">
+                    <div class="safety-icon"><i data-lucide="shield-alert"></i></div>
+                    <div class="safety-info">
+                        <h3>Stranger Alert</h3>
+                        <p>This person is not in your contacts. Do you know them?</p>
+                    </div>
+                    <div class="safety-actions">
+                        <button onclick="acceptStranger()" class="safety-btn accept">Yes, I know them</button>
+                        <button onclick="closeChat()" class="safety-btn ignore">No, Ignore</button>
+                    </div>
                 </div>
             </div>
 
@@ -151,8 +205,18 @@ require_once 'security.php'; // 🛡️ LOAD SECURITY RULES FIRST
             </div>
             <div class="settings-block">
                 <div class="settings-label">Profile Photo</div>
-                <div id="settings-photo-preview" class="settings-photo-preview">?</div>
-                <input type="file" id="settings-photo" accept="image/*" class="modal-input" />
+                <div class="settings-photo-row">
+                    <div id="settings-photo-preview" class="settings-photo-preview">?</div>
+                    <div class="settings-photo-actions">
+                        <button onclick="triggerPhotoUpload()" class="settings-action-btn">
+                            <i data-lucide="upload"></i> Upload Photo
+                        </button>
+                        <button onclick="removePhoto()" class="settings-action-btn delete">
+                            <i data-lucide="trash-2"></i> Remove
+                        </button>
+                        <input type="file" id="settings-photo" accept="image/*" style="display:none;" />
+                    </div>
+                </div>
             </div>
             <div class="settings-block">
                 <label class="settings-label" for="settings-name">Display Name</label>
@@ -165,6 +229,26 @@ require_once 'security.php'; // 🛡️ LOAD SECURITY RULES FIRST
             <div class="modal-actions">
                 <button onclick="closeSettings()" class="modal-btn-cancel">Cancel</button>
                 <button onclick="saveSettings()" class="modal-btn-add">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CONTACTS LIST MODAL ════════════════════════════════ -->
+    <div id="contacts-modal">
+        <div class="modal-card contacts-modal-card">
+            <div class="modal-title">
+                <div class="modal-title-icon"><i data-lucide="users"></i></div>
+                All Contacts
+            </div>
+            <div class="contacts-search">
+                <input type="text" id="contacts-search-input" placeholder="Search contacts..."
+                    oninput="filterContactsList()">
+            </div>
+            <div id="contacts-modal-list" class="modal-scroll-list">
+                <!-- Contacts will be rendered here -->
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeContacts()" class="modal-btn-cancel">Close</button>
             </div>
         </div>
     </div>

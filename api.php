@@ -18,8 +18,16 @@ function ensureColumn(PDO $pdo, string $table, string $column, string $definitio
     try {
         $stmt = $pdo->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
         $stmt->execute([$column]);
-        if (!$stmt->fetch()) {
+        $res = $stmt->fetch();
+        if (!$res) {
             $pdo->exec("ALTER TABLE `$table` ADD COLUMN $column $definition");
+        } else {
+            // If column exists, check if it's too small (e.g. TEXT instead of LONGTEXT)
+            $type = strtolower($res['Type']);
+            if (strpos($definition, 'LONGTEXT') !== false && strpos($type, 'longtext') === false) {
+                // Force upgrade to LONGTEXT
+                $pdo->exec("ALTER TABLE `$table` MODIFY COLUMN $column $definition");
+            }
         }
     } catch (PDOException $e) {
         // If we can't modify schema (e.g., limited privileges), proceed without failing.
@@ -69,12 +77,12 @@ if ($action === 'login') {
 // 3a. LOGIN_SESSION — silently restore PHP session for an existing tab (from sessionStorage)
 if ($action === 'login_session') {
     $phone = $_POST['phone'] ?? '';
-    $stmt = $pdo->prepare("SELECT phone, name FROM users WHERE phone = ?");
+    $stmt = $pdo->prepare("SELECT phone, name, profile_photo FROM users WHERE phone = ?");
     $stmt->execute([$phone]);
     $user = $stmt->fetch();
     if ($user) {
         $_SESSION['user_phone'] = $phone;
-        echo json_encode(['status' => 'success', 'name' => $user['name']]);
+        echo json_encode(['status' => 'success', 'name' => $user['name'], 'profile_photo' => $user['profile_photo'] ?? '']);
     } else {
         echo json_encode(['status' => 'error']);
     }
@@ -86,7 +94,8 @@ if ($action === 'get_my_key') {
     $phone = $_GET['phone'] ?? $_POST['phone'] ?? $_SESSION['user_phone'];
 
     // Ensure profile_photo column exists (optional feature)
-    ensureColumn($pdo, 'users', 'profile_photo', 'TEXT NULL');
+    // Ensure profile_photo column exists and is large enough
+    ensureColumn($pdo, 'users', 'profile_photo', 'LONGTEXT NULL');
 
     $profilePhoto = '';
     try {
@@ -120,13 +129,14 @@ if ($action === 'update_profile') {
     if ($photo && strpos($photo, 'data:image/') !== 0) {
         $photo = null;
     }
-    // Keep profile photo size reasonable
-    if ($photo && strlen($photo) > 1_500_000) {
+    // Keep profile photo size reasonable (8MB limit for Base64)
+    if ($photo && strlen($photo) > 8_000_000) {
         $photo = null;
     }
 
     // Ensure column exists before trying to save
-    ensureColumn($pdo, 'users', 'profile_photo', 'TEXT NULL');
+    // Ensure column exists and is large enough
+    ensureColumn($pdo, 'users', 'profile_photo', 'LONGTEXT NULL');
 
     // Build UPDATE query dynamically to avoid updating null values unnecessarily
     $fields = [];
@@ -188,31 +198,25 @@ if ($action === 'sync') {
     $myPhone = $_GET['phone'] ?? $_POST['phone'] ?? $_SESSION['user_phone'];
 
     // Ensure optional profile_photo column exists for contact avatars
-    ensureColumn($pdo, 'users', 'profile_photo', 'TEXT NULL');
+    // Ensure optional profile_photo column exists for contact avatars
+    ensureColumn($pdo, 'users', 'profile_photo', 'LONGTEXT NULL');
 
-    // Get Contacts with Unread Count
+    // Get Contacts + People who sent us messages (Stranger handling)
     $contacts = [];
     try {
         $cStmt = $pdo->prepare("
             SELECT u.phone, u.name, u.public_key, COALESCE(u.profile_photo, '') AS profile_photo,
-            (SELECT COUNT(*) FROM messages WHERE sender_phone = u.phone AND receiver_phone = ? AND is_read = 0) as unread_count
-            FROM contacts c 
-            JOIN users u ON c.contact_phone = u.phone 
-            WHERE c.user_phone = ?
+            (SELECT COUNT(*) FROM messages WHERE sender_phone = u.phone AND receiver_phone = ? AND is_read = 0) as unread_count,
+            EXISTS(SELECT 1 FROM contacts WHERE user_phone = ? AND contact_phone = u.phone) as is_contact
+            FROM users u
+            WHERE u.phone IN (SELECT contact_phone FROM contacts WHERE user_phone = ?)
+               OR u.phone IN (SELECT sender_phone FROM messages WHERE receiver_phone = ?)
         ");
-        $cStmt->execute([$myPhone, $myPhone]);
+        $cStmt->execute([$myPhone, $myPhone, $myPhone, $myPhone]);
         $contacts = $cStmt->fetchAll();
     } catch (PDOException $e) {
-        // Fallback if column isn't present
-        $cStmt = $pdo->prepare("
-            SELECT u.phone, u.name, u.public_key, COALESCE(u.profile_photo, '') AS profile_photo,
-            (SELECT COUNT(*) FROM messages WHERE sender_phone = u.phone AND receiver_phone = ? AND is_read = 0) as unread_count
-            FROM contacts c 
-            JOIN users u ON c.contact_phone = u.phone 
-            WHERE c.user_phone = ?
-        ");
-        $cStmt->execute([$myPhone, $myPhone]);
-        $contacts = $cStmt->fetchAll();
+        // Fallback or handle missing columns
+        $contacts = [];
     }
 
     // Get Messages (Sent and Received)
